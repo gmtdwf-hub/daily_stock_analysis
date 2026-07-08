@@ -38,7 +38,7 @@ from src.config import (
     normalize_news_strategy_profile,
     resolve_news_window_days,
 )
-from src.services.run_diagnostics import record_provider_run
+from src.services.run_diagnostics import record_provider_run, record_provider_run_started
 
 logger = logging.getLogger(__name__)
 
@@ -1085,7 +1085,7 @@ class AnspireSearchProvider(BaseSearchProvider):
     def __init__(self, api_keys: List[str]):
         super().__init__(api_keys, "Anspire")
     
-    def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
+    def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7, region_mode: int = 0) -> SearchResponse:
         """执行 Anspire 搜索"""
         try:
             import requests
@@ -1112,7 +1112,8 @@ class AnspireSearchProvider(BaseSearchProvider):
                 "query": query,
                 "top_k": min(max_results,50), 
                 "FromTime": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"),
-                "ToTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "ToTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "region_mode": region_mode
             }
             
             # 执行搜索
@@ -3704,6 +3705,11 @@ class SearchService:
 
                 started_at = time.monotonic()
                 try:
+                    record_provider_run_started(
+                        data_type="news_search",
+                        provider=provider.name,
+                        operation="search_stock_news",
+                    )
                     response = provider.search(query, provider_max_results, days=search_days, **search_kwargs)
                 except Exception as exc:
                     self._record_news_search_run(

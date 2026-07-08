@@ -32,6 +32,7 @@ import {
   type AlphaSiftCandidate,
   type AlphaSiftHotspotDetail,
   type AlphaSiftHotspot,
+  type AlphaSiftHotspotsResponse,
   type AlphaSiftScreenResponse,
   type AlphaSiftScreenTaskStatus,
   type AlphaSiftStrategy,
@@ -93,6 +94,16 @@ const clearPersistedScreenTask = () => {
 
 const isUnrecoverableScreenTaskError = (error: ParsedApiError) =>
   error.title === '选股任务不可恢复';
+
+const formatRecoverableScreenTaskPollingError = (error: ParsedApiError) => {
+  if (error.category === 'upstream_timeout') {
+    return '选股任务仍在后台运行，状态轮询暂时超时，将自动重试。';
+  }
+  if (error.category === 'upstream_network' || error.category === 'local_connection_failed') {
+    return '选股任务仍在后台运行，暂时无法连接本地服务获取状态，将自动重试。';
+  }
+  return formatParsedApiError(error) || '暂时无法获取选股任务状态，稍后将自动重试。';
+};
 
 const formatScore = (score: AlphaSiftCandidate['score']) => {
   if (score == null || Number.isNaN(Number(score))) {
@@ -267,6 +278,25 @@ const formatScreenTaskFailure = (value: string | null | undefined) => {
     return '选股任务失败，请稍后重试。';
   }
   return `选股任务失败：${summarizeAlphaSiftDiagnostic(text)}`;
+};
+
+const ALPHASIFT_HOTSPOT_NO_CACHE_HINT = 'No cached AlphaSift hotspot snapshot. Click refresh to fetch live hotspots.';
+const ALPHASIFT_HOTSPOT_UNAVAILABLE_CODE = 'eastmoney_hotspot_unavailable';
+
+const formatHotspotEmptyMessage = (result: AlphaSiftHotspotsResponse) => {
+  const message = String(result.message || '').trim();
+  const sourceErrors = result.sourceErrors || [];
+  if (message && sourceErrors.includes(ALPHASIFT_HOTSPOT_UNAVAILABLE_CODE)) {
+    return message;
+  }
+  if (message === ALPHASIFT_HOTSPOT_NO_CACHE_HINT) {
+    return '暂无缓存热点题材，展开后可点击刷新拉取实时数据。';
+  }
+  const sourceError = sourceErrors[0];
+  if (sourceError) {
+    return `热点题材暂未返回数据：${summarizeAlphaSiftDiagnostic(sourceError)}`;
+  }
+  return '热点题材暂未返回数据';
 };
 
 const ScreenAlertMessage: React.FC<{ messages: string[] }> = ({ messages }) => {
@@ -562,8 +592,7 @@ const StockScreeningPage: React.FC = () => {
       }
       setHotspotDetailError('');
       if (nextHotspots.length === 0) {
-        const sourceError = result.sourceErrors?.[0];
-        setHotspotError(sourceError ? `热点题材暂未返回数据：${sourceError}` : '热点题材暂未返回数据');
+        setHotspotError(formatHotspotEmptyMessage(result));
       }
     } catch (err) {
       setHotspotError(toApiErrorMessage(err, '热点题材加载失败，请稍后重试。'));
@@ -715,13 +744,14 @@ const StockScreeningPage: React.FC = () => {
           return;
         }
         const parsedError = getParsedApiError(err);
-        setError(formatParsedApiError(parsedError) || '暂时无法获取选股任务状态，稍后将自动重试。');
         if (isUnrecoverableScreenTaskError(parsedError)) {
+          setError(formatParsedApiError(parsedError) || '选股任务不可恢复，请重新提交。');
           setCandidates([]);
           setScreenMeta(null);
           finishTask();
           return;
         }
+        setError(formatRecoverableScreenTaskPollingError(parsedError));
         setLoading(true);
         timer = window.setTimeout(pollTask, SCREEN_TASK_POLL_INTERVAL_MS);
       }
